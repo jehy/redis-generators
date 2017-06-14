@@ -11,7 +11,7 @@ Generators and subscribers should both fail sometimes so I added blackout at ran
 I am not sure that count subscribers is optimal (we can just use locks) but checking
 alive subscribers like that seems more lightweight. Need more investigation.
 
-##Options
+## Options
 Change them directly in `index.js`:
 
 * `workers` number of workers for one node. workers*cpu should not be less then 2!
