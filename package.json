@@ -4,9 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node ./node_modules/mocha/bin/mocha",
-    "lint": "node ./node_modules/eslint/bin/eslint.js index.js",
-    "start": "node ./index.js"
+    "test": "node ./index.js",
+    "lint": "node ./node_modules/eslint/bin/eslint.js index.js view-errors.js",
+    "start": "node ./index.js",
+    "errors": "node ./view-errors.js"
   },
   "author": "",
   "license": "ISC",
@@ -24,7 +25,6 @@
     "eslint-plugin-jsx-a11y": "^5.0.3",
     "eslint-plugin-promise": "^3.5.0",
     "eslint-plugin-react": "^7.0.1",
-    "eslint-plugin-standard": "^3.0.1",
-    "mocha": "^3.4.2"
+    "eslint-plugin-standard": "^3.0.1"
   }
 }

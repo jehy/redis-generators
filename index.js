@@ -1,27 +1,32 @@
 /* eslint-disable no-console*/
 /* eslint-disable no-underscore-dangle*/
-const Redis           = require('ioredis'),
-      RedisLock       = require('ioredis-lock'),
-      Promise         = require('bluebird'),
-      colors          = require('colors'),
-      uuidV4          = require('uuid/v4'),
-      messageInterval = 20,
-      lockInterval    = messageInterval + 100,
-      enableLogging   = true,
-      workers         = 5,
-      showErrors      = false;
+const Redis                  = require('ioredis'),
+      RedisLock              = require('ioredis-lock'),
+      Promise                = require('bluebird'),
+      colors                 = require('colors'),
+      uuidV4                 = require('uuid/v4'),
+      messageInterval        = 1,
+      lockInterval           = messageInterval + 20,
+      enableLogging          = true,
+      cluster                = require('cluster'),
+      cpus                   = require('os').cpus().length,
+      workers                = 2,
+      maxMessageCount        = 1000,
+      maxMessageCountPerNode = maxMessageCount / cpus;
 
 let messageCount = 0;
 function myLog(guid, message, level) {
-  if (enableLogging) {
-    if (level === 'warn') {
-      console.log(colors.green(`${guid} : ${message}`));
-    } else if (level === 'warn') {
-      console.log(colors.red(`${guid} : ${message}`));
-    } else {
-      console.log(`${guid} : ${message}`);
-    }
+  if (!enableLogging) {
+    return;
   }
+  if (level === 'warn') {
+    console.log(colors.green(`${guid} : ${message}`));
+  } else if (level === 'warn') {
+    console.log(colors.red(`${guid} : ${message}`));
+  } else {
+    console.log(`${guid} : ${message}`);
+  }
+
 }
 
 function getRandomArbitrary(min, max) {
@@ -29,20 +34,26 @@ function getRandomArbitrary(min, max) {
 }
 
 function beGenerator(client, lock, myGuid) {
+  if (messageCount > maxMessageCountPerNode) {
+    myLog(myGuid, 'I`ve done all I could', 'warn');
+    cluster.worker.kill();
+    return 0;// no need to return here after suicide, only for consistency
+  }
   messageCount++;
   const errorGeneration = getRandomArbitrary(1, 100);
-  myLog(myGuid, 'publishing message');
   let message = messageCount;
   if (errorGeneration < 6) {
     message = `${messageCount}: ERROR: ${message}`;
-    myLog(myGuid, 'message will be an error');
+    myLog(myGuid, 'publishing error');
+  } else {
+    myLog(myGuid, 'publishing message');
   }
   return lock.extend(lockInterval)
     .then(()=> {
       return client.publish('data', message);
     })
     .then(()=> {
-      if (message === 66) {
+      if (errorGeneration < 3) {
         // emulate blackout. It would be better to release lock but we are emulating emergency, so...
         myLog(myGuid, 'emulating generator blackout', 'warn');
         return Promise.resolve();
@@ -57,8 +68,13 @@ function beGenerator(client, lock, myGuid) {
 }
 
 
-function beSubscriber(client, lockSubscriber, instanceGuid) {
+function beSubscriber(client, instanceGuid) {
   const subscribeClient = new Redis({keyPrefix: 'OneTwoTripTest:'});
+  const lockSubscriber = RedisLock.createLock(client, {
+    timeout: lockInterval,
+    retries: 0,
+    delay: messageInterval,
+  });
   return lockSubscriber.acquire('app:feature:lock:subscriber')
     .then(()=>subscribeClient.subscribe('data'))
     .then(()=> {
@@ -73,7 +89,8 @@ function beSubscriber(client, lockSubscriber, instanceGuid) {
                 action = client.lpush('errors', message);
               }
               if (getRandomArbitrary(1, 100) < 4) {
-                myLog(instanceGuid, 'emulating subscriber blackout', true);
+                myLog(instanceGuid, 'emulating subscriber blackout', 'warn');
+                // emulate blackout. It would be better to release lock but we are emulating emergency, so...
                 action.then(()=> {
                   subscribeClient.disconnect();
                   resolve();
@@ -82,94 +99,90 @@ function beSubscriber(client, lockSubscriber, instanceGuid) {
             })
             .catch(RedisLock.LockExtendError, ()=> {
               subscribeClient.disconnect();
-              Promise
-                .delay(messageInterval)
-                .then(()=>resolve());
+              resolve();
             });
         });
       });
     })
-    .catch(RedisLock.LockAcquisitionError, (err)=> {
+    .catch(RedisLock.LockAcquisitionError, ()=> {
       myLog(instanceGuid, 'Failed to get subscriber lock');
+      subscribeClient.disconnect();
       return Promise.delay(messageInterval);
     });
 }
 
-function startInstance(client, lockSubscriber, lockGenerator, instanceGuid) {
-  // try being a subscriber
-  return client.pubsub('NUMSUB', 'data')
-    .then((data)=> {
-      const subscribers = data[1];
-      // myLog(instanceGuid, `subscribers: ${data.toString()}`);
-      if (subscribers === 0) {
-        return beSubscriber(client, lockSubscriber, instanceGuid);
-      }
-      // try being a generator
-      return lockGenerator.acquire('app:feature:lock:generator')
-        .then(()=> {
-          myLog(instanceGuid, 'I am a generator now!', 'warn');
-          return beGenerator(client, lockGenerator, instanceGuid);
-        })
-        .catch(RedisLock.LockAcquisitionError, ()=> {
-          return Promise.delay(messageInterval);
-        });
-    });
-}
-
-function run() {
-  const instanceGuid = uuidV4();
+function run(guid) {
+  const instanceGuid = guid || uuidV4();
   myLog(instanceGuid, 'starting');
   const client = new Redis({keyPrefix: 'OneTwoTripTest:'});
 
-  function startFailover() {
-    const lockGenerator = RedisLock.createLock(client, {
-      timeout: lockInterval,
-      retries: 3,
-      delay: messageInterval,
-    });
-    const lockSubscriber = RedisLock.createLock(client, {
-      timeout: lockInterval,
-      retries: 3,
-      delay: messageInterval,
-    });
-    startInstance(client, lockSubscriber, lockGenerator, instanceGuid)
+  function start() {
+    return client.pubsub('NUMSUB', 'data')
+      .then((data)=> {
+        const subscribers = data[1];
+        if (subscribers === 0) {
+          return beSubscriber(client, instanceGuid);
+        }
+        // try being a generator
+        const lockGenerator = RedisLock.createLock(client, {
+          timeout: lockInterval,
+          retries: 0,
+          delay: messageInterval,
+        });
+        return lockGenerator.acquire('app:feature:lock:generator')
+          .then(()=> {
+            myLog(instanceGuid, 'I am a generator now!', 'warn');
+            return beGenerator(client, lockGenerator, instanceGuid);
+          })
+          .catch(RedisLock.LockAcquisitionError, ()=> {
+            return Promise.delay(messageInterval);
+          });
+      })
       .then(()=> {
-        myLog(instanceGuid, 'Instance stopped, long live the instance!', 'warn');
-        startFailover();
+        setImmediate(start);
       })
       .catch((err)=> {
-        myLog(instanceGuid, `Instance errored, restarting instance!' ${err.toString()}`, 'error');
-        startFailover();
+        myLog(instanceGuid, `Smth bad happened: ${err.toString()}`, 'error');
+        setImmediate(start);
       });
   }
 
-  startFailover();
+  start();
 }
 
-
-if (showErrors) {
-  const client = new Redis({keyPrefix: 'OneTwoTripTest:'});
-  console.log('Fetching errors...');
-  client.llen('errors')
-    .then((num)=> {
-      console.log(`Number of errors: ${num}`);
-      return client.lrange('errors', 0, num);
-    })
-    .then((data)=> {
-      for (let i = 0; i < data.length; i++) {
-        console.log(data[i]);
+function masterLog(data) {
+  console.log(colors.yellow(data));
+}
+if (cluster.isMaster) {
+  masterLog(`Master ${process.pid} is running`);
+  for (let i = 0; i < cpus; i++) {
+    cluster.fork();
+  }
+  cluster.on('exit', (node, code, signal) => {
+    masterLog(`node ${node.process.pid} died, code ${code}`);
+    if (code !== 0) { // client fallen, long live the client!
+      masterLog('restarting node');
+      cluster.fork();
+      return;
+    }
+    let nodesAlive = 0;
+    Object.keys(cluster.workers).forEach((id)=> {
+      if (!cluster.workers[id].isDead()) {
+        nodesAlive++;
       }
-    })
-    .delay(2000)// wait for console output
-    .then(()=> {
-      console.log('deleting errors database...');
-      return client.del('errors');
-    })
-    .then(()=> {
-      process.exit(0);
     });
+    if (nodesAlive === 0) {
+      masterLog('All processing finished, exiting gracefully');
+      Promise.delay(100) // to ensure that console output sucseeded
+        .then(()=>process.exit(0));
+    } else {
+      masterLog(`still waiting for ${nodesAlive} nodes to finish`);
+    }
+  });
 } else {
   for (let i = 0; i < workers; i++) {
     run();
   }
+  masterLog(`node ${process.pid} started`);
 }
+
