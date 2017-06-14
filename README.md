@@ -4,7 +4,8 @@
 
 Generator and subscribers via redis test task.
 
-I used node cluster for this task - it was not neccessary but it is more fun!
+I used node cluster for this task - it was not neccessary but it is more fun, fully
+ utilizes your CPUs and shows that application can run on separate servers.
 
 Generators and subscribers should both fail sometimes so I added blackout at random.
 

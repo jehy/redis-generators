@@ -1,20 +1,26 @@
 /* eslint-disable no-console*/
 /* eslint-disable no-underscore-dangle*/
-const Redis                  = require('ioredis'),
-      RedisLock              = require('ioredis-lock'),
-      Promise                = require('bluebird'),
-      colors                 = require('colors'),
-      uuidV4                 = require('uuid/v4'),
-      messageInterval        = 1,
-      lockInterval           = messageInterval + 20,
-      enableLogging          = true,
-      cluster                = require('cluster'),
-      cpus                   = require('os').cpus().length,
-      workers                = 2,
-      maxMessageCount        = 1000,
-      maxMessageCountPerNode = maxMessageCount / cpus;
+const Redis           = require('ioredis'),
+      RedisLock       = require('ioredis-lock'),
+      Promise         = require('bluebird'),
+      colors          = require('colors'),
+      uuidV4          = require('uuid/v4'),
+      messageInterval = 1,
+      lockInterval    = messageInterval + 20,
+      enableLogging   = true,
+      cluster         = require('cluster'),
+      workers         = 2,
+      maxMessageCount = 1000;
+let cpus = require('os').cpus().length;
+
+if (cpus === 32) {
+  cpus = 2; // HACK that's strange but require('os').cpus().length shows 32 on travis.
+}
+
+const maxMessageCountPerNode = maxMessageCount / cpus;
 
 let messageCount = 0;
+
 function myLog(guid, message, level) {
   if (!enableLogging) {
     return;
