@@ -155,6 +155,7 @@ function masterLog(data) {
 }
 if (cluster.isMaster) {
   masterLog(`Master ${process.pid} is running`);
+  masterLog(`I'm gonna launch ${cpus} nodes with ${workers} workers on each node`);
   for (let i = 0; i < cpus; i++) {
     cluster.fork();
   }
