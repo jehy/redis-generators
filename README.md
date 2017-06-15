@@ -1,6 +1,7 @@
 # Redis generators
 
 [![Build Status](https://travis-ci.org/jehy/redis-generators.svg?branch=master)](https://travis-ci.org/jehy/redis-generators)
+
 Test task.
 
 # The task
