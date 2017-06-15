@@ -32,7 +32,7 @@ Generators and subscribers should both fail sometimes so I added blackout at ran
 I am not sure that count subscribers is optimal (we can just use locks) but checking
 alive subscribers like that seems more lightweight. Need more investigation.
 
-**UPD. OOPS.** I thought that there should be only one active subscriber. But that was never in the task. So current solution is slow, unreliable and completely wrong. There is no need for pub/sub and subscriber lock. We should just use redis queue with message vidibility option like [this](https://github.com/smrchy/rsmq) for messages and preprocess this queue with all subscribers simultaneously.
+**UPD. OOPS.** I thought that there should be only one active subscriber. But that was never in the task. So current solution is slow, unreliable and completely wrong. There is no need for pub/sub and subscriber lock. We should just use redis queue with message visibility option like [this](https://github.com/smrchy/rsmq) for messages and preprocess this queue with all subscribers simultaneously.
 
 ## Options
 Change them directly in `index.js`:
